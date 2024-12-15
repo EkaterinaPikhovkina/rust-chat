@@ -1,19 +1,32 @@
-use futures_util::{StreamExt, SinkExt};
-use std::sync::Arc;
-use tokio::sync::{Mutex, broadcast};
-use warp::Filter;
-use std::collections::HashMap;
-use serde::Deserialize;
-use warp::http::StatusCode;
 use argon2::{self, Config};
+use futures_util::{SinkExt, StreamExt};
 use rand::random;
-use tokio_postgres::{NoTls, Error};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::{broadcast, Mutex};
+use tokio_postgres::{Client, Error, NoTls};
+use warp::http::StatusCode;
+use warp::Filter;
 
 #[derive(Deserialize)]
 struct User {
     username: String,
     password: String,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct Message {
+    username: String,
+    message: String,
+}
+
+// CREATE TABLE chat_history (
+// id SERIAL PRIMARY KEY,
+// username TEXT NOT NULL,
+// message TEXT NOT NULL,
+// timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+// );
 
 async fn register(
     new_user: User,
@@ -61,12 +74,27 @@ pub fn verify(hash: &str, password: &[u8]) -> bool {
     argon2::verify_encoded(hash, password).unwrap_or(false)
 }
 
+impl From<postgres::Row> for Message {
+    fn from(row: postgres::Row) -> Self {
+        Self {
+            username: row.get("username"),
+            message: row.get("message"),
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (client, connection) = tokio_postgres::connect("postgres://postgres:root@localhost:5432/postgres", NoTls).await?;
-    tokio::spawn(connection); // Запускаем соединение в фоновом режиме
-
-    println!("Connected to PostgreSQL");
+    let (client, connection) =
+        tokio_postgres::connect("postgres://postgres:root@localhost:5432/postgres", NoTls)
+            .await
+            .unwrap();
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("connection error: {}", e);
+        }
+    });
+    let db_client = Arc::new(Mutex::new(client));
 
     let db = Arc::new(Mutex::new(HashMap::<String, User>::new()));
     let db = warp::any().map(move || Arc::clone(&db));
@@ -94,51 +122,96 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and(warp::ws())
         .map(move |ws: warp::ws::Ws| {
             let tx = tx_ws.clone();
-            ws.on_upgrade(move |websocket| handle_connection(websocket, tx))
+            let db_client = db_client.clone();
+            ws.on_upgrade(move |websocket| handle_connection(websocket, tx, db_client))
         });
 
-    let static_route = warp::path::end()
-        .and(warp::fs::file("index.html"));
+    let static_route = warp::path::end().and(warp::fs::file("index.html"));
 
     let routes = register.or(login).or(ws_route).or(static_route);
     println!("Server listening on 127.0.0.1:8080");
 
-    warp::serve(routes)
-        .run(([127, 0, 0, 1], 8080))
-        .await;
+    warp::serve(routes).run(([127, 0, 0, 1], 8080)).await;
 
     Ok(())
 }
 
 async fn handle_connection(
     ws: warp::ws::WebSocket,
-    tx: Arc<Mutex<broadcast::Sender<String>>>,
+    tx: Arc<Mutex<broadcast::Sender<Message>>>,
+    db_client: Arc<Mutex<Client>>,
 ) {
     let (mut ws_sender, mut ws_receiver) = ws.split();
+    let client = db_client.lock().await; // Получаем доступ к клиенту
+
+    // Отправка всех сохраненных сообщений клиенту при подключении
+    if let Ok(rows) = client.query("SELECT username, message FROM chat_history", &[]).await {
+        for row in rows {
+            let msg = Message {
+                username: row.get("username"),
+                message: row.get("message"),
+            };
+            let json = serde_json::to_string(&msg).unwrap();
+            if ws_sender.send(warp::ws::Message::text(json)).await.is_err() {
+                return;
+            }
+        }
+    }
+
     // Subscribe to the broadcast channel
     let mut rx = {
-        let tx_guard = tx.lock().await; // Use .await to get the MutexGuard
+        let tx_guard = tx.lock().await;
         tx_guard.subscribe()
     };
+
     // Task to send broadcast messages to the client
     tokio::spawn(async move {
         while let Ok(msg) = rx.recv().await {
-            if ws_sender.send(warp::ws::Message::text(msg)).await.is_err() {
+            let json = serde_json::to_string(&msg).unwrap();
+            if ws_sender.send(warp::ws::Message::text(json)).await.is_err() {
                 break;
             }
         }
     });
+
     // Process incoming messages
     while let Some(result) = ws_receiver.next().await {
         match result {
             Ok(message) => {
                 if let Ok(text) = message.to_str() {
-                    println!("Received message: {}", text);
 
-                    let tx_guard = tx.lock().await;
-                    let _ = tx_guard.send(text.to_string());
+                    // Разбираем JSON-строку
+                    if let Ok(incoming) = serde_json::from_str::<Message>(text) {
+
+                        // Сохранение в базу данных
+                        if let Err(e) = client.execute(
+                                "INSERT INTO chat_history (username, message) VALUES ($1, $2)",
+                                &[&incoming.username, &incoming.message],
+                            )
+                            .await
+                        {
+                            eprintln!("Failed to save message: {}", e);
+                        }
+
+                        // Объединяем в строку для отображения
+                        let formatted_message =
+                            format!("{}: {}", incoming.username, incoming.message);
+                        println!("{}", formatted_message);
+
+                        // Создаём сообщение для отправки остальным клиентам
+                        let new_message = Message {
+                            username: incoming.username.clone(),
+                            message: incoming.message.clone(),
+                        };
+
+                        let tx_guard = tx.lock().await;
+                        let _ = tx_guard.send(new_message);
+
+                    } else {
+                        eprintln!("Invalid JSON received: {}", text);
+                    }
                 }
-            },
+            }
             Err(e) => {
                 eprintln!("Error receiving message: {}", e);
                 break;

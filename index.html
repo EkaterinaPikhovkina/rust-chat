@@ -309,11 +309,13 @@
     let ws = new WebSocket("ws://127.0.0.1:8080/ws");
 
     ws.onmessage = function (event) {
+        let data = JSON.parse(event.data);
+        let formattedMessage = `${data.username}: ${data.message}`;
         console.log('Received message:', event.data);
         let chat = document.getElementById("messages");
         let message = document.createElement("div");
         message.className = "message";
-        message.textContent = event.data;
+        message.textContent = formattedMessage;
         chat.appendChild(message);
         chat.scrollTop = chat.scrollHeight;
     };
@@ -322,8 +324,11 @@
         let usernameInput = document.getElementById("username");
         let messageInput = document.getElementById("message");
         if (usernameInput.value && messageInput.value) {
-            let message = usernameInput.value + ": " + messageInput.value;
-            ws.send(message);
+            let data = {
+                username: usernameInput.value,
+                message: messageInput.value
+            };
+            ws.send(JSON.stringify(data));
             messageInput.value = '';
         } else {
             alert("Please enter both your name and a message.");
