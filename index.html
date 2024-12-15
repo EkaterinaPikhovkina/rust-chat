@@ -1,0 +1,334 @@
+<!--<!DOCTYPE html>-->
+<!--<html lang="en">-->
+<!--<head>-->
+<!--  <meta charset="UTF-8">-->
+<!--  <meta name="viewport" content="width=device-width, initial-scale=1.0">-->
+<!--  <title>Chat App</title>-->
+<!--  <script>-->
+<!--    const registerUser = async () => {-->
+<!--      const username = document.getElementById('register-username').value;-->
+<!--      const password = document.getElementById('register-password').value;-->
+
+<!--      const response = await fetch('/register', {-->
+<!--        method: 'POST',-->
+<!--        headers: {-->
+<!--          'Content-Type': 'application/json'-->
+<!--        },-->
+<!--        body: JSON.stringify({ username, password })-->
+<!--      });-->
+
+<!--      if (response.status === 201) {-->
+<!--        alert('User registered successfully!');-->
+<!--      } else {-->
+<!--        alert('User registration failed.');-->
+<!--      }-->
+<!--    };-->
+
+<!--    const loginUser = async () => {-->
+<!--      const username = document.getElementById('login-username').value;-->
+<!--      const password = document.getElementById('login-password').value;-->
+
+<!--      const response = await fetch('/login', {-->
+<!--        method: 'POST',-->
+<!--        headers: {-->
+<!--          'Content-Type': 'application/json'-->
+<!--        },-->
+<!--        body: JSON.stringify({ username, password })-->
+<!--      });-->
+
+<!--      if (response.status === 200) {-->
+<!--        alert('Login successful!');-->
+<!--      } else {-->
+<!--        alert('Login failed.');-->
+<!--      }-->
+<!--    };-->
+
+<!--    let ws = new WebSocket("ws://127.0.0.1:8080/ws");-->
+
+<!--    ws.onmessage = function(event) {-->
+<!--      let chat = document.getElementById("chat");-->
+<!--      let message = document.createElement("div");-->
+<!--      message.className = "message";-->
+<!--      message.textContent = event.data;-->
+<!--      chat.appendChild(message);-->
+<!--      chat.scrollTop = chat.scrollHeight;-->
+<!--    };-->
+
+<!--    function sendMessage() {-->
+<!--      let usernameInput = document.getElementById("username");-->
+<!--      let messageInput = document.getElementById("message");-->
+<!--      if (usernameInput.value && messageInput.value) {-->
+<!--        let message = usernameInput.value + ": " + messageInput.value;-->
+<!--        ws.send(message);-->
+<!--        messageInput.value = '';-->
+<!--      } else {-->
+<!--        alert("Please enter both your name and a message.");-->
+<!--      }-->
+<!--    }-->
+<!--  </script>-->
+<!--  <style>-->
+<!--    body {-->
+<!--      font-family: Arial, sans-serif;-->
+<!--      margin: 0;-->
+<!--      padding: 0;-->
+<!--      display: flex;-->
+<!--      justify-content: center;-->
+<!--      align-items: center;-->
+<!--      height: 100vh;-->
+<!--      background-color: #f4f4f4;-->
+<!--    }-->
+<!--    #chatContainer {-->
+<!--      width: 100%;-->
+<!--      max-width: 600px;-->
+<!--      height: 80%;-->
+<!--      display: flex;-->
+<!--      flex-direction: column;-->
+<!--      border: 1px solid #ccc;-->
+<!--      border-radius: 10px;-->
+<!--      overflow: hidden;-->
+<!--      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);-->
+<!--      background-color: #fff;-->
+<!--    }-->
+<!--    #chat {-->
+<!--      flex: 1;-->
+<!--      padding: 10px;-->
+<!--      overflow-y: auto;-->
+<!--      background-color: #f9f9f9;-->
+<!--    }-->
+<!--    #messageInput {-->
+<!--      display: flex;-->
+<!--      padding: 10px;-->
+<!--      background-color: #fff;-->
+<!--      border-top: 1px solid #ccc;-->
+<!--    }-->
+<!--    #messageInput input, #messageInput button {-->
+<!--      padding: 10px;-->
+<!--      border: 1px solid #ccc;-->
+<!--      border-radius: 5px;-->
+<!--    }-->
+<!--    #messageInput input {-->
+<!--      flex: 1;-->
+<!--      margin-right: 10px;-->
+<!--    }-->
+<!--    #messageInput button {-->
+<!--      background-color: #4CAF50;-->
+<!--      color: white;-->
+<!--      cursor: pointer;-->
+<!--      border-left: none;-->
+<!--    }-->
+<!--    .message span {-->
+<!--      font-weight: bold;-->
+<!--      color: #00796b;-->
+<!--    }-->
+<!--  </style>-->
+<!--</head>-->
+<!--<body>-->
+<!--<section>-->
+<!--  <h2>Register</h2>-->
+<!--  <input id="register-username" type="text" placeholder="Username">-->
+<!--  <input id="register-password" type="password" placeholder="Password">-->
+<!--  <button onclick="registerUser()">Register</button>-->
+<!--</section>-->
+
+<!--<section>-->
+<!--  <h2>Login</h2>-->
+<!--  <input id="login-username" type="text" placeholder="Username">-->
+<!--  <input id="login-password" type="password" placeholder="Password">-->
+<!--  <button onclick="loginUser()">Login</button>-->
+<!--</section>-->
+
+<!--<section>-->
+<!--  <h2>WebSocket Chat</h2>-->
+<!--  <div id="chatContainer">-->
+<!--    <div id="chat"></div>-->
+<!--    <div id="messageInput">-->
+<!--      <label for="username"></label><input type="text" id="username" placeholder="Enter your name" autocomplete="off">-->
+<!--      <label for="message"></label><input type="text" id="message" placeholder="Type your message here..." autocomplete="off">-->
+<!--      <button onclick="sendMessage()">Send</button>-->
+<!--    </div>-->
+<!--  </div>-->
+<!--</section>-->
+
+<!--</body>-->
+<!--</html>-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Chat</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f4;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .messages {
+            height: 300px;
+            overflow-y: scroll;
+            margin-bottom: 20px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        .input-group {
+            display: flex;
+            margin-top: 20px;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            padding: 10px;
+            margin-right: 10px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+
+        button {
+            padding: 10px 20px;
+            background-color: #ea61e8;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+
+        .form-group {
+            margin-bottom: 10px;
+        }
+
+        .form-group input {
+            padding: 8px;
+            width: 100%;
+            margin-bottom: 10px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+
+        .form-group button {
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div style="display: block;" id="register">
+        <h1>Register</h1>
+        <div class="form-group">
+            <input type="text" id="reg-username" placeholder="Username" required/>
+            <input type="password" id="reg-password" placeholder="Password" required/>
+            <button onclick="register()">Register</button>
+        </div>
+    </div>
+
+    <div style="display: block;" id="login">
+        <h1>Login</h1>
+        <div class="form-group">
+            <input type="text" id="login-username" placeholder="Username" required/>
+            <input type="password" id="login-password" placeholder="Password" required/>
+            <button onclick="login()">Login</button>
+        </div>
+    </div>
+
+    <div style="display: none;" id="chat">
+        <h1>WebSocket Chat</h1>
+        <div class="messages" id="messages"></div>
+        <div class="input-group">
+            <input type="text" id="username" placeholder="Enter your name" autocomplete="off">
+            <input type="text" id="message" placeholder="Type a message" autocomplete="off"/>
+            <button id="sendBtn" onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    function register() {
+        const username = document.getElementById('reg-username').value;
+        const password = document.getElementById('reg-password').value;
+
+        fetch('/register', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({username, password})
+        }).then(response => {
+            if (response.status === 201) {
+                alert("Registered successfully!");
+            } else {
+                alert("Username already exists!");
+            }
+        });
+    }
+
+    function login() {
+        const username = document.getElementById('login-username').value;
+        const password = document.getElementById('login-password').value;
+        const registerDiv = document.getElementById("register");
+        const loginDiv = document.getElementById("login");
+        const chatDiv = document.getElementById("chat");
+
+        fetch('/login', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({username, password})
+        }).then(response => {
+            if (response.status === 200) {
+                alert("Login successful!");
+                registerDiv.style.display = 'none';
+                loginDiv.style.display = 'none';
+                chatDiv.style.display = 'block';
+            } else {
+                alert("Invalid username or password!");
+            }
+        });
+    }
+
+    let ws = new WebSocket("ws://127.0.0.1:8080/ws");
+
+    ws.onmessage = function (event) {
+        console.log('Received message:', event.data);
+        let chat = document.getElementById("messages");
+        let message = document.createElement("div");
+        message.className = "message";
+        message.textContent = event.data;
+        chat.appendChild(message);
+        chat.scrollTop = chat.scrollHeight;
+    };
+
+    function sendMessage() {
+        let usernameInput = document.getElementById("username");
+        let messageInput = document.getElementById("message");
+        if (usernameInput.value && messageInput.value) {
+            let message = usernameInput.value + ": " + messageInput.value;
+            ws.send(message);
+            messageInput.value = '';
+        } else {
+            alert("Please enter both your name and a message.");
+        }
+    }
+</script>
+</body>
+</html>
