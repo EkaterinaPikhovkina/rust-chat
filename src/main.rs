@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
-use tokio_postgres::{Client, Error, NoTls};
+use tokio_postgres::{Client, NoTls};
 use warp::http::StatusCode;
 use warp::Filter;
 
@@ -142,21 +142,6 @@ async fn handle_connection(
     db_client: Arc<Mutex<Client>>,
 ) {
     let (mut ws_sender, mut ws_receiver) = ws.split();
-    let client = db_client.lock().await; // Получаем доступ к клиенту
-
-    // Отправка всех сохраненных сообщений клиенту при подключении
-    if let Ok(rows) = client.query("SELECT username, message FROM chat_history", &[]).await {
-        for row in rows {
-            let msg = Message {
-                username: row.get("username"),
-                message: row.get("message"),
-            };
-            let json = serde_json::to_string(&msg).unwrap();
-            if ws_sender.send(warp::ws::Message::text(json)).await.is_err() {
-                return;
-            }
-        }
-    }
 
     // Subscribe to the broadcast channel
     let mut rx = {
@@ -164,8 +149,26 @@ async fn handle_connection(
         tx_guard.subscribe()
     };
 
+    let db_client_clone_for_sender = db_client.clone(); // Клонируем для отправки исторических
+
     // Task to send broadcast messages to the client
     tokio::spawn(async move {
+        let client = db_client_clone_for_sender.lock().await;
+        // Отправка всех сохраненных сообщений клиенту при подключении
+        if let Ok(rows) = client.query("SELECT username, message FROM chat_history", &[]).await {
+            for row in rows {
+                let msg = Message {
+                    username: row.get("username"),
+                    message: row.get("message"),
+                };
+                let json = serde_json::to_string(&msg).unwrap();
+                if ws_sender.send(warp::ws::Message::text(json)).await.is_err() {
+                    return;
+                }
+            }
+        }
+        drop(client); // Важно освободить MutexGuard
+
         while let Ok(msg) = rx.recv().await {
             let json = serde_json::to_string(&msg).unwrap();
             if ws_sender.send(warp::ws::Message::text(json)).await.is_err() {
@@ -179,12 +182,13 @@ async fn handle_connection(
         match result {
             Ok(message) => {
                 if let Ok(text) = message.to_str() {
-
                     // Разбираем JSON-строку
                     if let Ok(incoming) = serde_json::from_str::<Message>(text) {
-
+                        let db_client_clone_for_insert = db_client.clone(); // Клонируем для вставки
+                        let client = db_client_clone_for_insert.lock().await;
                         // Сохранение в базу данных
-                        if let Err(e) = client.execute(
+                        if let Err(e) = client
+                            .execute(
                                 "INSERT INTO chat_history (username, message) VALUES ($1, $2)",
                                 &[&incoming.username, &incoming.message],
                             )
@@ -192,6 +196,7 @@ async fn handle_connection(
                         {
                             eprintln!("Failed to save message: {}", e);
                         }
+                        drop(client); // Важно освободить MutexGuard
 
                         // Объединяем в строку для отображения
                         let formatted_message =
@@ -206,7 +211,6 @@ async fn handle_connection(
 
                         let tx_guard = tx.lock().await;
                         let _ = tx_guard.send(new_message);
-
                     } else {
                         eprintln!("Invalid JSON received: {}", text);
                     }
